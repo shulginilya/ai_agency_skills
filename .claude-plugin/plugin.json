@@ -1,0 +1,13 @@
+{
+  "name": "ai-agency-skills",
+  "version": "0.1.0",
+  "description": "Reusable agent skills maintained in the ai_agency_skills repository.",
+  "author": {
+    "name": "Ilya Shulgin",
+    "email": "ishulgin8@gmail.com"
+  },
+  "homepage": "https://github.com/shulginilya/ai_agency_skills",
+  "repository": "https://github.com/shulginilya/ai_agency_skills",
+  "license": "MIT",
+  "keywords": ["skills", "agents", "automation"]
+}

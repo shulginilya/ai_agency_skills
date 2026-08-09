@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate SKILL.md files and manifests
+        run: python3 scripts/validate_skills.py
+
+      - name: Check markdown links are not obviously broken
+        run: |
+          set -e
+          fail=0
+          while IFS= read -r f; do
+            grep -oE '\]\(([^)#][^)]*)\)' "$f" | sed -E 's/^\]\(//; s/\)$//' | while read -r t; do
+              case "$t" in
+                http://*|https://*|mailto:*) continue ;;
+              esac
+              target="$(dirname "$f")/${t%%#*}"
+              [ -e "$target" ] || { echo "broken link in $f -> $t"; exit 1; }
+            done || fail=1
+          done < <(find . -name '*.md' -not -path './.git/*')
+          exit $fail
