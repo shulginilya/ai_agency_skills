@@ -8,7 +8,8 @@ No required structure. Add a line here when you add a file.
 
 ## Index
 
-- _(nothing yet)_
+- [job-search/](job-search/README.md) — working data for the `job-hunter` agent:
+  candidate profile, application pipeline, gap plan, per-application packages.
 
 ## Suggested conventions
 

@@ -28,6 +28,22 @@ Rules:
 | `allowed-tools` | no | list restricting tools while the skill is active |
 | `metadata` | no | free-form map (`version`, `author`, `tags`, …) |
 
+## Adding an agent
+
+```bash
+cp templates/agent-template.md agents/<agent-name>.md
+```
+
+Rules:
+
+- File name is kebab-case and **must equal** the `name` in frontmatter.
+- Frontmatter needs `name` and `description`; `tools` (comma-separated allowlist)
+  and `model` are optional. Omit `tools` to inherit everything.
+- Keep the agent file thin: identity, ground truth, routing table, guardrails.
+  Procedure goes in a skill so it loads only when needed.
+- Restrict `tools` deliberately. An agent that can send email or submit forms
+  should have to be given those tools on purpose.
+
 ## Adding reference docs
 
 Anything that isn't a runtime skill goes in `docs/`. No schema — just keep
