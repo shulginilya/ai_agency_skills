@@ -80,6 +80,35 @@ Rules:
 - Restrict `tools` deliberately. An agent that can send email or submit forms
   should have to be given those tools on purpose.
 
+## Adding a hook
+
+Hooks live in [`hooks/hooks.json`](hooks/hooks.json) and ship with the plugin,
+so they run on other people's machines on every matching event. Treat them
+accordingly:
+
+- Point at bundled scripts through `${CLAUDE_PLUGIN_ROOT}`, in exec form
+  (`"command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/scripts/x.py"]`).
+  A relative path resolves against the session's working directory, not the plugin.
+- Match as narrowly as the job allows, and set a `timeout`. A hook on
+  `PreToolUse` with no matcher runs on every tool call in every turn.
+- Fail open. Exit 0 unless you mean to block; exit 2 is a policy decision, and
+  stderr becomes the reason Claude sees.
+- Stay quiet on success. stdout and stderr land in Claude's context or the
+  user's transcript on most events.
+- Parse the event JSON with Python's stdlib, not `jq` — it isn't installed
+  everywhere, and this repo already depends on `python3`.
+- Never log file contents or command strings, and cap anything you write.
+
+[`hooks/README.md`](hooks/README.md) covers the full contract and the demo hook
+that follows all of the above. `python3 scripts/validate_skills.py` checks the
+manifest's shape and that referenced scripts exist; test the handler itself by
+piping a sample event at it:
+
+```bash
+echo '{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"README.md"},"session_id":"demo"}' \
+  | python3 hooks/scripts/demo_hook.py; echo "exit=$?"
+```
+
 ## Adding reference docs
 
 Anything that isn't a runtime skill goes in `docs/`. No schema — just keep

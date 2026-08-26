@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate SKILL.md files and agent definitions against the Agent Skills format.
+"""Validate SKILL.md files, agent definitions, and plugin manifests.
 
 Usage:
     python3 scripts/validate_skills.py              # validate skills/ and agents/
@@ -63,6 +63,40 @@ AGENT_KNOWN_KEYS = {"name", "description", "tools", "model", "color", "metadata"
 TOOL_LIST_KEYS = ("allowed-tools", "disallowed-tools")
 ARGUMENT_KEYS = ("argument-hint", "arguments")
 ARG_PLACEHOLDER_RE = re.compile(r"(?<!\\)\$(ARGUMENTS|\d)")
+
+HOOKS_MANIFEST = REPO_ROOT / "hooks" / "hooks.json"
+
+# Events Claude Code fires. Unknown names are warned about, not rejected:
+# the list grows faster than this file does.
+HOOK_EVENTS = {
+    "SessionStart", "Setup", "UserPromptSubmit", "UserPromptExpansion",
+    "PreToolUse", "PermissionRequest", "PermissionDenied", "PostToolUse",
+    "PostToolUseFailure", "PostToolBatch", "Stop", "StopFailure",
+    "Notification", "MessageDisplay", "SubagentStart", "SubagentStop",
+    "TaskCreated", "TaskCompleted", "TeammateIdle", "InstructionsLoaded",
+    "ConfigChange", "CwdChanged", "DirectoryAdded", "FileChanged",
+    "PreCompact", "PostCompact", "WorktreeCreate", "WorktreeRemove",
+    "Elicitation", "ElicitationResult", "SessionEnd",
+}
+
+# type -> fields that handler type cannot work without.
+HOOK_TYPE_REQUIRED = {
+    "command": ("command",),
+    "http": ("url",),
+    "mcp_tool": ("server", "tool"),
+    "prompt": ("prompt",),
+    "agent": ("prompt",),
+}
+
+HOOK_HANDLER_KEYS = {
+    "type", "if", "timeout", "statusMessage", "once",
+    "command", "args", "async", "asyncRewake", "shell",
+    "url", "headers", "allowedEnvVars",
+    "server", "tool", "input",
+    "prompt", "model",
+}
+
+PLUGIN_ROOT_RE = re.compile(r"\$\{CLAUDE_PLUGIN_ROOT\}([^\s\"']*)")
 
 
 class Report:
@@ -334,6 +368,96 @@ def validate_json_manifests(report: Report) -> None:
             report.error(rel, f"invalid JSON: {exc}")
 
 
+def validate_hooks_manifest(report: Report) -> None:
+    """Check hooks/hooks.json: valid JSON, known events, usable handlers, real scripts."""
+    if not HOOKS_MANIFEST.is_file():
+        return
+    rel = rel_path(HOOKS_MANIFEST)
+
+    try:
+        data = json.loads(HOOKS_MANIFEST.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        report.error(rel, f"invalid JSON: {exc}")
+        return
+
+    events = data.get("hooks") if isinstance(data, dict) else None
+    if not isinstance(events, dict):
+        report.error(rel, "expected a top-level 'hooks' object mapping event names to lists")
+        return
+
+    for event, groups in events.items():
+        if event not in HOOK_EVENTS:
+            report.warn(rel, f"unrecognized hook event {event!r}")
+        if not isinstance(groups, list):
+            report.error(rel, f"{event}: expected a list of matcher groups")
+            continue
+
+        for i, group in enumerate(groups):
+            where = f"{event}[{i}]"
+            if not isinstance(group, dict):
+                report.error(rel, f"{where}: expected an object")
+                continue
+            matcher = group.get("matcher")
+            if matcher is not None and not isinstance(matcher, str):
+                report.error(rel, f"{where}: 'matcher' must be a string")
+            handlers = group.get("hooks")
+            if not isinstance(handlers, list) or not handlers:
+                report.error(rel, f"{where}: needs a non-empty 'hooks' list")
+                continue
+
+            for j, handler in enumerate(handlers):
+                validate_hook_handler(handler, f"{where}.hooks[{j}]", rel, report)
+
+
+def validate_hook_handler(handler: object, where: str, rel: str, report: Report) -> None:
+    if not isinstance(handler, dict):
+        report.error(rel, f"{where}: expected an object")
+        return
+
+    htype = handler.get("type")
+    if htype not in HOOK_TYPE_REQUIRED:
+        report.error(
+            rel,
+            f"{where}: 'type' must be one of {', '.join(sorted(HOOK_TYPE_REQUIRED))}",
+        )
+        return
+    for field in HOOK_TYPE_REQUIRED[htype]:
+        if not handler.get(field):
+            report.error(rel, f"{where}: type {htype!r} requires {field!r}")
+
+    for key in handler:
+        if key not in HOOK_HANDLER_KEYS:
+            report.warn(rel, f"{where}: unrecognized handler key {key!r}")
+
+    timeout = handler.get("timeout")
+    if timeout is not None and (not isinstance(timeout, (int, float)) or timeout <= 0):
+        report.error(rel, f"{where}: 'timeout' must be a positive number of seconds")
+
+    args = handler.get("args")
+    if args is not None and not (isinstance(args, list) and all(isinstance(a, str) for a in args)):
+        report.error(rel, f"{where}: 'args' must be a list of strings")
+
+    if htype != "command":
+        return
+
+    # A bundled script is addressed through ${CLAUDE_PLUGIN_ROOT}; make sure it is there.
+    command = handler.get("command", "")
+    for part in [command] + list(args or []):
+        for match in PLUGIN_ROOT_RE.finditer(str(part).replace('"', "")):
+            target = REPO_ROOT / match.group(1).lstrip("/\\")
+            if not target.exists():
+                report.error(rel, f"{where}: script not found: {match.group(0)}")
+
+    # Shell form word-splits on spaces, and plugin paths contain them.
+    if isinstance(command, str) and args is None and "${CLAUDE_" in command:
+        if '"${CLAUDE_' not in command and "'${CLAUDE_" not in command:
+            report.warn(
+                rel,
+                f"{where}: unquoted path placeholder in shell form; use exec form "
+                "('args': [...]) or quote it so a space in the path cannot split the command",
+            )
+
+
 def discover(targets: list[str]) -> list[Path]:
     if targets:
         return [Path(t).resolve() for t in targets]
@@ -361,6 +485,7 @@ def main() -> int:
     if not skill_dirs:
         print("No skills found in skills/ — nothing to validate.")
         validate_json_manifests(report)
+        validate_hooks_manifest(report)
     else:
         seen: dict[str, Path] = {}
         for skill_dir in skill_dirs:
@@ -372,6 +497,7 @@ def main() -> int:
             seen[skill_dir.name] = skill_dir
             validate_skill(skill_dir, report, spec_only=args.spec_frontmatter)
         validate_json_manifests(report)
+        validate_hooks_manifest(report)
 
     for agent_md in agent_files:
         validate_agent(agent_md, report)
