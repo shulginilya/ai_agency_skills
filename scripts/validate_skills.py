@@ -27,8 +27,42 @@ NAME_MAX = 64
 DESC_MAX = 1024
 BODY_SOFT_MAX_LINES = 500
 
-KNOWN_KEYS = {"name", "description", "license", "allowed-tools", "metadata"}
+# Fields the Agent Skills spec allows. These are the only ones that survive a
+# claude.ai upload, the Skills API, or packaging with package_skill.py.
+SPEC_KEYS = {
+    "name",
+    "description",
+    "license",
+    "compatibility",
+    "metadata",
+    "allowed-tools",
+}
+
+# Fields Claude Code understands in addition to the spec. Using any of these
+# makes the skill Claude Code / plugin only — see --spec-frontmatter.
+CLAUDE_CODE_KEYS = {
+    "when_to_use",
+    "argument-hint",
+    "arguments",
+    "disable-model-invocation",
+    "user-invocable",
+    "disallowed-tools",
+    "model",
+    "effort",
+    "context",
+    "agent",
+    "background",
+    "hooks",
+    "paths",
+    "shell",
+}
+
+KNOWN_KEYS = SPEC_KEYS | CLAUDE_CODE_KEYS
 AGENT_KNOWN_KEYS = {"name", "description", "tools", "model", "color", "metadata"}
+
+TOOL_LIST_KEYS = ("allowed-tools", "disallowed-tools")
+ARGUMENT_KEYS = ("argument-hint", "arguments")
+ARG_PLACEHOLDER_RE = re.compile(r"(?<!\\)\$(ARGUMENTS|\d)")
 
 
 class Report:
@@ -125,7 +159,7 @@ def rel_path(path: Path) -> str:
         return path.as_posix()
 
 
-def validate_skill(skill_dir: Path, report: Report) -> None:
+def validate_skill(skill_dir: Path, report: Report, spec_only: bool = False) -> None:
     rel = rel_path(skill_dir)
     skill_md = skill_dir / "SKILL.md"
 
@@ -175,10 +209,20 @@ def validate_skill(skill_dir: Path, report: Report) -> None:
         if key not in KNOWN_KEYS:
             report.warn(rel, f"unrecognized frontmatter key {key!r}")
 
-    # allowed-tools shape
-    tools = fm.get("allowed-tools")
-    if tools is not None and not isinstance(tools, list):
-        report.warn(rel, "'allowed-tools' should be a list")
+    # tool allow/deny lists: a space- or comma-separated string is also valid
+    for key in TOOL_LIST_KEYS:
+        value = fm.get(key)
+        if value is not None and not isinstance(value, (str, list)):
+            report.warn(rel, f"{key!r} should be a string or a list")
+
+    # portability: flag Claude Code-only fields when the spec subset is required
+    if spec_only:
+        for key in sorted(set(fm) & CLAUDE_CODE_KEYS):
+            report.warn(
+                rel,
+                f"{key!r} is not in the Agent Skills spec; a claude.ai upload or "
+                "package_skill.py run will reject it",
+            )
 
     # body
     if not body.strip():
@@ -190,6 +234,27 @@ def validate_skill(skill_dir: Path, report: Report) -> None:
             f"body is {body_lines} lines (>{BODY_SOFT_MAX_LINES}); "
             "move detail into sibling files",
         )
+
+    # arguments declared but never used, or used but never declared
+    declared = fm.get("arguments")
+    if isinstance(declared, str):
+        declared = declared.replace(",", " ").split()
+    elif not isinstance(declared, list):
+        declared = []
+    declared = [str(d) for d in declared if d]
+
+    uses_positional = bool(ARG_PLACEHOLDER_RE.search(body))
+    uses_named = [d for d in declared if re.search(rf"(?<!\\)\${re.escape(d)}\b", body)]
+
+    if any(k in fm for k in ARGUMENT_KEYS) and not (uses_positional or uses_named):
+        report.warn(
+            rel,
+            "declares arguments in frontmatter but the body has no $ARGUMENTS, "
+            "$N, or named placeholder to receive them",
+        )
+    for d in declared:
+        if d not in uses_named:
+            report.warn(rel, f"argument {d!r} is declared but never used as ${d} in the body")
 
     # relative links resolve
     for target in re.findall(r"\]\(([^)#][^)]*)\)", body):
@@ -281,6 +346,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("targets", nargs="*", help="skill directories (default: all in skills/)")
     parser.add_argument("--strict", action="store_true", help="treat warnings as errors")
+    parser.add_argument(
+        "--spec-frontmatter",
+        action="store_true",
+        help="warn on frontmatter fields outside the Agent Skills spec "
+             "(use when the skill must also upload to claude.ai)",
+    )
     args = parser.parse_args()
 
     report = Report()
@@ -299,7 +370,7 @@ def main() -> int:
             if skill_dir.name in seen:
                 report.error(skill_dir.name, "duplicate skill name")
             seen[skill_dir.name] = skill_dir
-            validate_skill(skill_dir, report)
+            validate_skill(skill_dir, report, spec_only=args.spec_frontmatter)
         validate_json_manifests(report)
 
     for agent_md in agent_files:

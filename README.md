@@ -54,6 +54,21 @@ $EDITOR agents/my-agent.md          # file name must match frontmatter `name`
 python3 scripts/validate_skills.py
 ```
 
+## Slash commands and arguments
+
+Every skill is also a slash command, and anything typed after it is substituted
+into the skill body before Claude sees it — `$ARGUMENTS` for the raw string,
+`$0`/`$1` positionally (0-based), or named arguments declared in frontmatter.
+
+```
+/demo-args "hello world" json some trailing notes
+```
+
+[`skills/demo-args/`](skills/demo-args/SKILL.md) is a live demonstration: it
+prints what every placeholder expanded to, including the cases that surprise
+people. Its [reference.md](skills/demo-args/reference.md) is the full rule set;
+[CONTRIBUTING.md](CONTRIBUTING.md) has the short version.
+
 ## Using these skills
 
 **Personal (single skill):** copy the skill folder into `~/.claude/skills/`.
