@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Validate SKILL.md files against the Agent Skills format.
+"""Validate SKILL.md files and agent definitions against the Agent Skills format.
 
 Usage:
-    python3 scripts/validate_skills.py              # validate skills/
+    python3 scripts/validate_skills.py              # validate skills/ and agents/
     python3 scripts/validate_skills.py skills/foo   # validate one skill dir
     python3 scripts/validate_skills.py --strict     # treat warnings as errors
 
@@ -20,6 +20,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILLS_DIR = REPO_ROOT / "skills"
+AGENTS_DIR = REPO_ROOT / "agents"
 
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 NAME_MAX = 64
@@ -27,6 +28,7 @@ DESC_MAX = 1024
 BODY_SOFT_MAX_LINES = 500
 
 KNOWN_KEYS = {"name", "description", "license", "allowed-tools", "metadata"}
+AGENT_KNOWN_KEYS = {"name", "description", "tools", "model", "color", "metadata"}
 
 
 class Report:
@@ -197,6 +199,62 @@ def validate_skill(skill_dir: Path, report: Report) -> None:
             report.warn(rel, f"linked file not found: {target}")
 
 
+def validate_agent(agent_md: Path, report: Report) -> None:
+    """Validate one agents/<name>.md definition."""
+    rel = rel_path(agent_md)
+
+    text = agent_md.read_text(encoding="utf-8")
+    split = split_frontmatter(text)
+    if split is None:
+        report.error(rel, "agent file has no YAML frontmatter delimited by '---'")
+        return
+
+    fm_text, body = split
+    fm, problems = parse_frontmatter(fm_text)
+    for p in problems:
+        report.error(rel, f"frontmatter {p}")
+
+    name = fm.get("name")
+    if not name or not isinstance(name, str):
+        report.error(rel, "frontmatter is missing required field 'name'")
+    else:
+        if not NAME_RE.match(name):
+            report.error(rel, f"name {name!r} must be lowercase kebab-case")
+        if len(name) > NAME_MAX:
+            report.error(rel, f"name is {len(name)} chars (max {NAME_MAX})")
+        if name != agent_md.stem:
+            report.error(
+                rel, f"name {name!r} does not match file name {agent_md.stem!r}"
+            )
+
+    desc = fm.get("description")
+    if not desc or not isinstance(desc, str):
+        report.error(rel, "frontmatter is missing required field 'description'")
+    elif len(desc) > DESC_MAX:
+        report.error(rel, f"description is {len(desc)} chars (max {DESC_MAX})")
+    elif len(desc) < 40:
+        report.warn(rel, "description is very short; state what it does AND when to use it")
+
+    for key in fm:
+        if key not in AGENT_KNOWN_KEYS:
+            report.warn(rel, f"unrecognized frontmatter key {key!r}")
+
+    tools = fm.get("tools")
+    if tools is not None and not isinstance(tools, (str, list)):
+        report.warn(rel, "'tools' should be a comma-separated string or a list")
+
+    if not body.strip():
+        report.error(rel, "agent file has no body content")
+    if len(body.splitlines()) > BODY_SOFT_MAX_LINES:
+        report.warn(rel, f"body is long (>{BODY_SOFT_MAX_LINES} lines); push detail into skills")
+
+
+def discover_agents() -> list[Path]:
+    if not AGENTS_DIR.is_dir():
+        return []
+    return sorted(p for p in AGENTS_DIR.glob("*.md") if p.is_file())
+
+
 def validate_json_manifests(report: Report) -> None:
     for path in (
         REPO_ROOT / ".claude-plugin" / "marketplace.json",
@@ -227,6 +285,7 @@ def main() -> int:
 
     report = Report()
     skill_dirs = discover(args.targets)
+    agent_files = [] if args.targets else discover_agents()
 
     if not skill_dirs:
         print("No skills found in skills/ — nothing to validate.")
@@ -243,6 +302,9 @@ def main() -> int:
             validate_skill(skill_dir, report)
         validate_json_manifests(report)
 
+    for agent_md in agent_files:
+        validate_agent(agent_md, report)
+
     for w in report.warnings:
         print(f"WARN  {w}")
     for e in report.errors:
@@ -250,7 +312,7 @@ def main() -> int:
 
     failed = bool(report.errors) or (args.strict and bool(report.warnings))
     print(
-        f"\n{len(skill_dirs)} skill(s) checked — "
+        f"\n{len(skill_dirs)} skill(s) and {len(agent_files)} agent(s) checked — "
         f"{len(report.errors)} error(s), {len(report.warnings)} warning(s)."
     )
     return 1 if failed else 0

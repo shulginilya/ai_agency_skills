@@ -13,11 +13,14 @@ The repo also doubles as an installable **plugin marketplace** for Claude Code /
 ├── .claude-plugin/
 │   ├── marketplace.json      # makes this repo installable as a plugin source
 │   └── plugin.json           # the repo root *is* the plugin bundle
+├── agents/                   # subagent definitions, one .md per agent
+│   └── job-hunter.md
 ├── skills/                   # source of truth: one folder per skill
 │   └── example-skill/
 │       └── SKILL.md
 ├── docs/                     # free-form reference notes, not runtime skills
-│   └── README.md
+│   ├── README.md
+│   └── job-search/           # working data for the job-hunter agent
 ├── templates/
 │   └── skill-template/       # copy this to start a new skill
 │       └── SKILL.md
@@ -26,10 +29,12 @@ The repo also doubles as an installable **plugin marketplace** for Claude Code /
 └── .github/workflows/ci.yml
 ```
 
-`skills/` is the source of truth. `docs/` is for anything that isn't a skill —
-research notes, playbooks, client context, architecture decisions. Adding a new
-top-level area later (e.g. `agents/`, `mcp/`, `prompts/`) is fine; the validator
-only looks at `skills/`.
+`skills/` is the source of truth for capabilities. `agents/` holds subagent
+definitions — thin files that carry identity, a tool allowlist, and routing, and
+delegate procedure to skills. `docs/` is for anything that isn't runtime — research
+notes, playbooks, client context, architecture decisions, and per-agent working
+data. Adding a new top-level area later (e.g. `mcp/`, `prompts/`) is fine; the
+validator looks at `skills/` and `agents/`.
 
 ## Quick start
 
@@ -38,6 +43,14 @@ Create a new skill:
 ```bash
 cp -r templates/skill-template skills/my-new-skill
 $EDITOR skills/my-new-skill/SKILL.md
+python3 scripts/validate_skills.py
+```
+
+Create a new agent:
+
+```bash
+cp templates/agent-template.md agents/my-agent.md
+$EDITOR agents/my-agent.md          # file name must match frontmatter `name`
 python3 scripts/validate_skills.py
 ```
 
@@ -57,11 +70,17 @@ python3 scripts/validate_skills.py
 ## Validation
 
 ```bash
-python3 scripts/validate_skills.py          # lint every skill
-python3 scripts/validate_skills.py skills/x # lint one
+python3 scripts/validate_skills.py          # lint every skill and agent
+python3 scripts/validate_skills.py skills/x # lint one skill
 ```
 
 CI runs the same check on every push and pull request.
+
+## Agents
+
+| Agent | What it does |
+|---|---|
+| [job-hunter](agents/job-hunter.md) | Runs the senior SWE → senior AI engineer job search: sourcing, applications, pipeline, gap plan, interview prep. Working data in [docs/job-search/](docs/job-search/README.md). |
 
 ## Contributing
 
