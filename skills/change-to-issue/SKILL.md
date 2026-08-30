@@ -1,9 +1,58 @@
 ---
 name: change-to-issue
-description: Turn work that has just been done — a diff, a branch, or changes made earlier in this conversation — into a GitHub issue or ticket that someone else can review. Use this whenever the user asks for "a ticket", "a GitHub issue", "an issue for this", "write this up so I can file it", "a Jira/Linear ticket", or says they need to file, log, or open something for work that already exists. Also use it when they ask you to describe or write up a change for other people, or ask for a PR description of what you just built — the shaping method is the same. Do not use it for planning work that has not been done yet.
+description: Turn work that has just been done — a diff, a branch, or changes made earlier in this conversation — into a GitHub issue or ticket that someone else can review. Optionally takes the issue title as an argument (/change-to-issue "an issue title"), which is then used verbatim and scopes the ticket to the part of the change it names. Use this whenever the user asks for "a ticket", "a GitHub issue", "an issue for this", "write this up so I can file it", "a Jira/Linear ticket", or says they need to file, log, or open something for work that already exists. Also use it when they ask you to describe or write up a change for other people, or ask for a PR description of what you just built — the shaping method is the same. Do not use it for planning work that has not been done yet.
+argument-hint: "[issue title]"
 ---
 
 # Change → issue
+
+## The title you were given
+
+Requested title: `$ARGUMENTS`
+
+Everything typed after the command is the issue title, raw and unsplit — that is
+why the source reads `\$ARGUMENTS` here rather than a named argument: a title is
+free prose, and a positional split would hand you only its first word. When
+nothing was typed, the backticks above are empty. Check which case you are in
+before doing anything else.
+
+Invoked as, quoting therefore optional:
+
+```
+/change-to-issue feat(skills): change-to-issue takes an optional issue title
+/change-to-issue "fix(validator): reject skill dirs whose name differs from frontmatter"
+/change-to-issue feat(hooks): add PostToolUse audit hook   # two pieces of work in the
+                                                           # tree: the title picks one
+/ai-agency-skills:change-to-issue "docs: document the free-prose argument rule"
+/change-to-issue                                           # no title — derive one
+```
+
+The plugin-qualified form is only needed when another command already claims the
+bare name.
+
+**A title was given.** It does two jobs:
+
+- **It is the title.** Use it verbatim. The user has already decided how this
+  will read in their tracker and is about to paste it into the field above your
+  body — do not re-case it, tighten it, or bolt a conventional-commit prefix
+  onto prose. If you think it is misleading, say so in your message and let them
+  decide; do not quietly fix it.
+- **It scopes the ticket.** Read the change through it. What the title names is
+  the ticket; what it does not name goes under out-of-scope, or into a second
+  ticket you offer to write. This is the case the argument exists for: a working
+  tree holding two unrelated pieces of work, where the title says which one the
+  user means.
+
+If the title describes something the change does not actually do, stop and say
+so rather than writing a body around it. A title and a body that disagree is the
+one defect a reviewer cannot catch by reading the diff.
+
+**No title was given.** Nothing changes — derive one from the change, as under
+[Title and labels](#title-and-labels).
+
+Either way the title is a scope statement, not source material. It never
+substitutes for reading the change, and nothing enters the body because the
+title implied it.
 
 ## What you are actually producing
 
@@ -43,9 +92,10 @@ Three things to extract while reading, because they are what the draft is built 
 3. **What is verified and what is not.** Tests run, checks passed, things you know are
    untested. Numbers here must be ones you actually observed.
 
-If the diff mixes two unrelated pieces of work, say so and offer to split it into two
-tickets rather than quietly writing one that describes both. A ticket that covers two
-things cannot be closed.
+If the diff mixes two unrelated pieces of work and no title was given, say so and offer
+to split it into two tickets rather than quietly writing one that describes both. A
+ticket that covers two things cannot be closed. If a title *was* given, it has already
+chosen the half the user means: write that one, and list the other under out-of-scope.
 
 ## Match the shape to the size of the change
 
@@ -112,7 +162,10 @@ A draft that admits a gap gets fixed. A draft that hides one gets merged.
 
 ## Title and labels
 
-Read `git log --oneline` and match what the repo already does. If commits are
+If the user supplied a title, that decision is already made — use it and skip to
+labels.
+
+Otherwise, read `git log --oneline` and match what the repo already does. If commits are
 conventional (`feat(api): …`), title the issue the same way; if they are prose, use
 prose. Keep it specific enough to be findable in a list of two hundred: name the thing
 that changed, not the activity ("multi-turn session endpoints", not "API improvements").
@@ -125,7 +178,9 @@ guesses. Never invent a label taxonomy the project does not use.
 
 The user is going to paste this into a web form, so give them something pasteable:
 write the body to a markdown file and deliver it, and put the title and labels in your
-message rather than burying them in the file. Keep the surrounding commentary to a
+message rather than burying them in the file. Echo the title on its own line even when
+they supplied it — they are filling two fields, and a title they can copy next to the
+body beats one they have to scroll back for. Keep the surrounding commentary to a
 couple of lines — point at the one or two decisions you most want challenged, and
 mention if you think the change should have been split.
 
