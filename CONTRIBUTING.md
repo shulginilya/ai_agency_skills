@@ -64,6 +64,25 @@ injection aborts the whole invocation on a non-zero exit, so append `|| true`.
 json` to watch each form resolve, and see its
 [reference.md](skills/demo-args/reference.md) for the full rules.
 
+## Getting your changes into a harness
+
+```bash
+python3 scripts/export.py --target claude-code-user
+```
+
+Symlinks by default, so after one export your edits here are live in
+`~/.claude/` with no re-run. `--dry-run` shows what would happen, `--uninstall`
+reverses it from the receipt the install wrote. The README has the target table.
+
+Two rules the exporter enforces, worth knowing before you add a component type:
+
+- **The allowlist is in `EXPORTABLE`.** Anything not named there cannot leave the
+  repo by any target. `docs/` is deliberately absent.
+- **`${CLAUDE_PLUGIN_ROOT}` only expands inside a plugin.** Every other target
+  rewrites it to this checkout's absolute path, so a hook or server command that
+  uses it keeps working. Other `${VAR}` references are left alone to expand at
+  runtime.
+
 ## Adding an MCP server
 
 Edit `.mcp.json`; `templates/mcp-server.json` has a stdio and an HTTP example to
