@@ -1,0 +1,14 @@
+[
+  {
+    "name": "example-always",
+    "command": "tail -F ./logs/app.log",
+    "description": "Application error log",
+    "when": "always"
+  },
+  {
+    "name": "example-on-invoke",
+    "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/monitors/scripts/demo_monitor.py\" --check",
+    "description": "Deployment status changes",
+    "when": "on-skill-invoke:demo-monitor"
+  }
+]

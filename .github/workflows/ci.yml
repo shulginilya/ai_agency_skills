@@ -20,6 +20,12 @@ jobs:
       - name: Validate SKILL.md files and manifests
         run: python3 scripts/validate_skills.py
 
+      # Reported, not enforced: a skill may deliberately be Claude Code-only.
+      # This is here so portability drift is visible before an upload fails,
+      # rather than discovered as a missing slash command in a cloud session.
+      - name: Report skills that cannot be uploaded to claude.ai
+        run: python3 scripts/validate_skills.py --spec-frontmatter
+
       - name: Check markdown links are not obviously broken
         run: |
           set -e

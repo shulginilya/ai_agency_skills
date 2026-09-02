@@ -64,6 +64,50 @@ injection aborts the whole invocation on a non-zero exit, so append `|| true`.
 json` to watch each form resolve, and see its
 [reference.md](skills/demo-args/reference.md) for the full rules.
 
+## Adding an MCP server
+
+Edit `.mcp.json`; `templates/mcp-server.json` has a stdio and an HTTP example to
+copy from.
+
+Rules:
+
+- A server is **either** stdio (`command`, optional `args`/`env`/`cwd`) **or**
+  remote (`url`, optional `headers`/`headersHelper`), never both.
+- **No literal credentials.** This file is committed. Use `${ENV_VAR}`, which
+  expands in `command`, `args` and `env` for stdio servers and in `url`,
+  `headers` and `headersHelper` for remote ones. The validator warns when a key
+  matching `key|token|secret|password|credential|auth` holds a value that is not
+  an environment reference.
+- `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}` and `${CLAUDE_PROJECT_DIR}`
+  expand in the same places. A `${CLAUDE_PLUGIN_ROOT}` path must point at a file
+  this repo actually ships — the validator checks.
+- It stays at the repo root rather than behind a `mcpServers` override in
+  `plugin.json`, because that path also works when the repo is opened as a
+  project rather than installed as a plugin.
+
+## Adding a monitor
+
+Edit `monitors/monitors.json`; `templates/monitor.json` has both `when` forms.
+
+Rules:
+
+- The manifest is a **JSON array**, not an object keyed by event. `hooks.json`
+  is the one that is keyed.
+- `name`, `command` and `description` are required and must be non-empty.
+  `name` must be unique — it is what stops a reload starting a second copy.
+- `when` is `"always"` (the default) or `"on-skill-invoke:<skill-name>"`, and
+  the named skill must exist in `skills/`.
+- **Default to opt-in.** Every stdout line becomes a notification, which
+  interrupts. Unless a monitor is genuinely wanted in every session, register it
+  `on-skill-invoke:` and let someone ask for it.
+- **Flush every line.** Python buffers stdout when it is not a terminal, so an
+  unflushed monitor looks like a dead one. `print(..., flush=True)` or `python3 -u`.
+- Quote path placeholders in `command` — an installed plugin path can contain
+  spaces.
+- Monitors are an experimental plugin component; the manifest location may move.
+
+[`monitors/README.md`](monitors/README.md) covers the contract in full.
+
 ## Adding an agent
 
 ```bash
@@ -77,6 +121,9 @@ Rules:
   and `model` are optional. Omit `tools` to inherit everything.
 - Keep the agent file thin: identity, ground truth, routing table, guardrails.
   Procedure goes in a skill so it loads only when needed.
+- Inside the `## Routing` section, a backticked kebab-case token is read as a
+  skill name and must exist in `skills/`. That is what catches a routing typo,
+  which otherwise dead-ends silently at runtime.
 - Restrict `tools` deliberately. An agent that can send email or submit forms
   should have to be given those tools on purpose.
 
