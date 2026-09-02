@@ -61,7 +61,13 @@ CLAUDE_CODE_KEYS = {
 }
 
 KNOWN_KEYS = SPEC_KEYS | CLAUDE_CODE_KEYS
-AGENT_KNOWN_KEYS = {"name", "description", "tools", "model", "color", "metadata"}
+# Agent frontmatter. Only name and description are required; the rest are the
+# documented optional fields, kept here so a legitimate one does not warn.
+AGENT_KNOWN_KEYS = {
+    "name", "description", "tools", "model", "color", "metadata",
+    "permissionMode", "skills", "memory", "hooks", "isolation", "effort",
+    "background", "maxTurns", "mcpServers", "initialPrompt", "experimental",
+}
 
 TOOL_LIST_KEYS = ("allowed-tools", "disallowed-tools")
 ARGUMENT_KEYS = ("argument-hint", "arguments")

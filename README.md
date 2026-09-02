@@ -157,16 +157,60 @@ credential-shaped key holds something that is not an environment reference.
 
 ## Using these skills
 
-**Personal (single skill):** copy the skill folder into `~/.claude/skills/`.
+`scripts/export.py` installs what is in this repo into whichever harness you
+want. The repo stays the single source; each target is a thin adapter that knows
+where that harness keeps things.
 
-**Project-scoped:** copy into `<project>/.claude/skills/`.
+```bash
+python3 scripts/export.py --target claude-code-user            # ~/.claude
+python3 scripts/export.py --target claude-code-project --dest ~/work/api
+python3 scripts/export.py --target claude-ai                   # uploadable archives
+python3 scripts/export.py --target generic                     # bundle + manifest
+python3 scripts/export.py --target plugin                      # validate only
+```
 
-**As a plugin marketplace (recommended):**
+| Target | Skills & agents | Hooks | MCP servers | Monitors |
+|---|---|---|---|---|
+| `claude-code-user` | `~/.claude/{skills,agents}/` | merged into `~/.claude/settings.json` | prints the `claude mcp add-json` commands | — |
+| `claude-code-project` | `<dest>/.claude/{skills,agents}/` | merged into `<dest>/.claude/settings.json` | merged into `<dest>/.mcp.json` | — |
+| `claude-ai` | one archive per skill | — | — | — |
+| `generic` | copied flat | copied | copied | copied |
+| `plugin` | installed from git by the marketplace | | | |
+
+Monitors are a plugin-only component — Claude Code has no user or project
+location for them — so the two Claude Code targets say so rather than silently
+dropping them. Install this repo as a plugin if you want the monitors:
 
 ```
 /plugin marketplace add shulginilya/ai_agency_skills
 /plugin install ai-agency-skills@ai-agency-skills
 ```
+
+### What the exporter guarantees
+
+- **Symlinks by default**, so editing a `SKILL.md` here changes the installed
+  skill with no re-run. `--copy` forces real copies; Windows without Developer
+  Mode falls back to copying on its own and says so.
+- **Idempotent**, with `--dry-run`. A second run reports `no change`.
+- **An allowlist, not a denylist.** Only skills, agents, hooks, MCP servers and
+  monitors can leave the repo. `docs/` never does — a copy of your working data
+  under `~/.claude/` would be in scope for every unrelated session on the
+  machine.
+- **Reversible.** Each install writes a `.ai-agency-export.json` receipt naming
+  exactly what it created, so `--uninstall` removes our files and our settings
+  entries and leaves anyone else's alone.
+- **Refuses to export a repo that does not validate** (`--skip-validate` to
+  override).
+
+```bash
+python3 scripts/export.py --target claude-code-user --dry-run
+python3 scripts/export.py --target claude-code-user --uninstall
+```
+
+The `claude-ai` target is the one that matters for cloud sessions: it reduces
+each skill's frontmatter to the six keys the Agent Skills spec allows and names
+what it dropped, because a skill carrying `argument-hint` is rejected on upload
+and then simply is not there when you type its slash command.
 
 ## Validation
 
@@ -174,6 +218,8 @@ credential-shaped key holds something that is not an environment reference.
 python3 scripts/validate_skills.py          # lint every skill, agent and manifest
 python3 scripts/validate_skills.py skills/x # lint one skill
 ```
+
+`scripts/export.py` runs this first and refuses to export a repo that fails.
 
 The same run checks every manifest in the repo:
 
