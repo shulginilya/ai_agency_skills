@@ -1,0 +1,19 @@
+# Normalize every text file to LF, both in the repository and on disk.
+#
+# `eol=lf` rather than a bare `text=auto` on purpose: this working tree is read
+# by more than one git — the Windows checkout, and the same directory mounted
+# into a Linux VM by the Claude desktop bridge. A bare `text=auto` leaves the
+# on-disk bytes to each machine's `core.eol`, the two disagree, and whichever
+# git does not have `core.autocrlf=true` reports every file as modified.
+* text=auto eol=lf
+
+# Binary: never convert, never diff as text.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.woff binary
+*.woff2 binary
