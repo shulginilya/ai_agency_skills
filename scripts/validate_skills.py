@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Validate SKILL.md files, agent definitions, and plugin manifests.
 
+Manifests checked: .claude-plugin/{plugin,marketplace}.json, hooks/hooks.json,
+.mcp.json and monitors/monitors.json.
+
 Usage:
-    python3 scripts/validate_skills.py              # validate skills/ and agents/
+    python3 scripts/validate_skills.py              # validate skills/, agents/ and manifests
     python3 scripts/validate_skills.py skills/foo   # validate one skill dir
     python3 scripts/validate_skills.py --strict     # treat warnings as errors
 
@@ -65,6 +68,32 @@ ARGUMENT_KEYS = ("argument-hint", "arguments")
 ARG_PLACEHOLDER_RE = re.compile(r"(?<!\\)\$(ARGUMENTS|\d)")
 
 HOOKS_MANIFEST = REPO_ROOT / "hooks" / "hooks.json"
+MCP_MANIFEST = REPO_ROOT / ".mcp.json"
+MONITORS_MANIFEST = REPO_ROOT / "monitors" / "monitors.json"
+PLUGIN_MANIFEST = REPO_ROOT / ".claude-plugin" / "plugin.json"
+
+MONITOR_REQUIRED = ("name", "command", "description")
+MONITOR_KNOWN_KEYS = {"name", "command", "description", "when"}
+
+# An MCP server is either spawned (stdio) or dialled (http/sse/ws). One of the
+# two shapes has to be recognizable or there is nothing to connect to.
+MCP_STDIO_KEYS = {"type", "command", "args", "env", "cwd"}
+MCP_REMOTE_KEYS = {"type", "url", "headers", "headersHelper"}
+MCP_KNOWN_KEYS = MCP_STDIO_KEYS | MCP_REMOTE_KEYS
+
+# plugin.json fields that can name a component path. A string or list of strings
+# is a file reference; an object or list of objects is inline config.
+PLUGIN_PATH_KEYS = (
+    "skills", "commands", "agents", "workflows",
+    "hooks", "mcpServers", "outputStyles", "lspServers",
+)
+
+# Within an agent's "## Routing" section, a backticked kebab-case token is read
+# as a skill name.
+ROUTING_SECTION_RE = re.compile(r"^##+[ \t]+Routing[ \t]*$(.*?)(?=^##[ \t]|\Z)", re.M | re.S)
+BACKTICKED_RE = re.compile(r"`([a-z0-9][a-z0-9-]*)`")
+
+SECRETISH_KEY_RE = re.compile(r"(?i)(key|token|secret|password|passwd|credential|auth)")
 
 # Events Claude Code fires. Unknown names are warned about, not rejected:
 # the list grows faster than this file does.
@@ -347,6 +376,39 @@ def validate_agent(agent_md: Path, report: Report) -> None:
     if len(body.splitlines()) > BODY_SOFT_MAX_LINES:
         report.warn(rel, f"body is long (>{BODY_SOFT_MAX_LINES} lines); push detail into skills")
 
+    validate_agent_routing(rel, body, report)
+
+
+def skill_names() -> set[str]:
+    if not SKILLS_DIR.is_dir():
+        return set()
+    return {p.name for p in SKILLS_DIR.iterdir() if p.is_dir() and not p.name.startswith(".")}
+
+
+def validate_agent_routing(rel: str, body: str, report: Report) -> None:
+    """Every skill an agent routes to must exist -- a typo here dead-ends silently."""
+    match = ROUTING_SECTION_RE.search(body)
+    if match is None:
+        return
+    known = skill_names()
+    if not known:
+        return
+    for name in dict.fromkeys(BACKTICKED_RE.findall(match.group(1))):
+        if NAME_RE.match(name) and name not in known:
+            report.error(rel, f"routing table names skill {name!r}, which is not in skills/")
+
+
+def check_plugin_root_paths(value: object, where: str, rel: str, report: Report) -> None:
+    """A ${CLAUDE_PLUGIN_ROOT}/... reference must point at a file this repo ships."""
+    for match in PLUGIN_ROOT_RE.finditer(str(value).replace('"', "")):
+        if not (REPO_ROOT / match.group(1).lstrip("/\\")).exists():
+            report.error(rel, f"{where}: path not found: {match.group(0)}")
+
+
+def looks_like_a_literal_secret(key: str, value: str) -> bool:
+    """A credential-shaped key whose value is not an ${ENV_VAR} reference."""
+    return bool(SECRETISH_KEY_RE.search(key)) and "${" not in value and len(value) > 8
+
 
 def discover_agents() -> list[Path]:
     if not AGENTS_DIR.is_dir():
@@ -458,6 +520,174 @@ def validate_hook_handler(handler: object, where: str, rel: str, report: Report)
             )
 
 
+def validate_mcp_manifest(report: Report) -> None:
+    """Check .mcp.json: valid JSON, a usable shape per server, no committed secrets."""
+    if not MCP_MANIFEST.is_file():
+        return
+    rel = rel_path(MCP_MANIFEST)
+
+    try:
+        data = json.loads(MCP_MANIFEST.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        report.error(rel, f"invalid JSON: {exc}")
+        return
+
+    if not isinstance(data, dict):
+        report.error(rel, "expected a top-level object")
+        return
+    servers = data.get("mcpServers")
+    if servers is None:
+        report.error(rel, "expected a top-level 'mcpServers' object")
+        return
+    if not isinstance(servers, dict):
+        report.error(rel, "'mcpServers' must be an object mapping server names to configs")
+        return
+
+    for name, config in servers.items():
+        where = f"mcpServers.{name}"
+        if not isinstance(config, dict):
+            report.error(rel, f"{where}: expected an object")
+            continue
+
+        has_command = bool(config.get("command"))
+        has_url = bool(config.get("url"))
+        if has_command and has_url:
+            report.error(rel, f"{where}: has both 'command' and 'url'; a server is stdio or remote, not both")
+        elif not has_command and not has_url:
+            report.error(rel, f"{where}: needs 'command' (stdio) or 'url' (http/sse/ws)")
+
+        args = config.get("args")
+        if args is not None and not (isinstance(args, list) and all(isinstance(a, str) for a in args)):
+            report.error(rel, f"{where}: 'args' must be a list of strings")
+
+        for field in ("env", "headers"):
+            value = config.get(field)
+            if value is None:
+                continue
+            if not (isinstance(value, dict) and all(isinstance(v, str) for v in value.values())):
+                report.error(rel, f"{where}: {field!r} must be an object of string values")
+                continue
+            for k, v in value.items():
+                if looks_like_a_literal_secret(k, v):
+                    report.warn(
+                        rel,
+                        f"{where}: {field}.{k} looks like a literal secret; this file is "
+                        "committed -- use ${ENV_VAR} and keep the value out of the repo",
+                    )
+
+        for key in config:
+            if key not in MCP_KNOWN_KEYS:
+                report.warn(rel, f"{where}: unrecognized key {key!r}")
+
+        for part in [config.get("command", "")] + list(args if isinstance(args, list) else []):
+            check_plugin_root_paths(part, where, rel, report)
+
+
+def validate_monitors_manifest(report: Report) -> None:
+    """Check monitors/monitors.json: an array of usable monitor definitions."""
+    if not MONITORS_MANIFEST.is_file():
+        return
+    rel = rel_path(MONITORS_MANIFEST)
+
+    try:
+        data = json.loads(MONITORS_MANIFEST.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        report.error(rel, f"invalid JSON: {exc}")
+        return
+
+    if not isinstance(data, list):
+        report.error(
+            rel,
+            "expected a top-level array of monitor objects "
+            "(unlike hooks.json, which is an object keyed by event)",
+        )
+        return
+
+    known_skills = skill_names()
+    seen: set[str] = set()
+
+    for i, entry in enumerate(data):
+        where = f"[{i}]"
+        if not isinstance(entry, dict):
+            report.error(rel, f"{where}: expected an object")
+            continue
+
+        name = entry.get("name")
+        if isinstance(name, str) and name.strip():
+            where = f"[{i}] {name!r}"
+            if name in seen:
+                report.error(rel, f"{where}: duplicate monitor name")
+            seen.add(name)
+
+        for field in MONITOR_REQUIRED:
+            value = entry.get(field)
+            if not isinstance(value, str) or not value.strip():
+                report.error(rel, f"{where}: requires a non-empty string {field!r}")
+
+        when = entry.get("when")
+        if when is not None:
+            if not isinstance(when, str):
+                report.error(rel, f"{where}: 'when' must be a string")
+            elif when != "always":
+                if not when.startswith("on-skill-invoke:"):
+                    report.error(
+                        rel,
+                        f'{where}: \'when\' must be "always" or "on-skill-invoke:<skill-name>", got {when!r}',
+                    )
+                else:
+                    skill = when.split(":", 1)[1]
+                    if not skill:
+                        report.error(rel, f"{where}: 'when' has no skill name after 'on-skill-invoke:'")
+                    elif known_skills and skill not in known_skills:
+                        report.error(
+                            rel, f"{where}: 'when' names skill {skill!r}, which is not in skills/"
+                        )
+
+        for key in entry:
+            if key not in MONITOR_KNOWN_KEYS:
+                report.warn(rel, f"{where}: unrecognized key {key!r}")
+
+        check_plugin_root_paths(entry.get("command", ""), where, rel, report)
+
+
+def validate_plugin_components(report: Report) -> None:
+    """A plugin.json path override pointing nowhere drops a whole component silently."""
+    if not PLUGIN_MANIFEST.is_file():
+        return
+    rel = rel_path(PLUGIN_MANIFEST)
+
+    try:
+        data = json.loads(PLUGIN_MANIFEST.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return  # already reported by validate_json_manifests
+    if not isinstance(data, dict):
+        return
+
+    overrides = [(key, data.get(key)) for key in PLUGIN_PATH_KEYS]
+    experimental = data.get("experimental")
+    if isinstance(experimental, dict):
+        overrides.append(("experimental.monitors", experimental.get("monitors")))
+
+    for key, value in overrides:
+        if value is None:
+            continue
+        candidates = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+        for candidate in candidates:
+            if not isinstance(candidate, str):
+                continue  # inline config, not a path
+            if not (REPO_ROOT / candidate).exists():
+                report.error(rel, f"{key}: path not found: {candidate}")
+
+
+def validate_manifests(report: Report) -> None:
+    """Everything in the repo that is a manifest rather than a skill or an agent."""
+    validate_json_manifests(report)
+    validate_plugin_components(report)
+    validate_hooks_manifest(report)
+    validate_mcp_manifest(report)
+    validate_monitors_manifest(report)
+
+
 def discover(targets: list[str]) -> list[Path]:
     if targets:
         return [Path(t).resolve() for t in targets]
@@ -484,8 +714,7 @@ def main() -> int:
 
     if not skill_dirs:
         print("No skills found in skills/ — nothing to validate.")
-        validate_json_manifests(report)
-        validate_hooks_manifest(report)
+        validate_manifests(report)
     else:
         seen: dict[str, Path] = {}
         for skill_dir in skill_dirs:
@@ -496,8 +725,7 @@ def main() -> int:
                 report.error(skill_dir.name, "duplicate skill name")
             seen[skill_dir.name] = skill_dir
             validate_skill(skill_dir, report, spec_only=args.spec_frontmatter)
-        validate_json_manifests(report)
-        validate_hooks_manifest(report)
+        validate_manifests(report)
 
     for agent_md in agent_files:
         validate_agent(agent_md, report)

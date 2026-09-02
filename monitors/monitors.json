@@ -1,0 +1,8 @@
+[
+  {
+    "name": "demo-hook-log",
+    "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/monitors/scripts/demo_monitor.py\"",
+    "description": "New entries in the demo hook's audit log",
+    "when": "on-skill-invoke:demo-monitor"
+  }
+]
