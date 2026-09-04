@@ -333,6 +333,18 @@ claude.ai-uploadable shape.
 | Agent | What it does |
 |---|---|
 | [job-hunter](agents/job-hunter.md) | Runs the senior SWE → senior AI engineer job search: sourcing, applications, pipeline, gap plan, interview prep. Working data in [docs/job-search/](docs/job-search/README.md). |
+| [scrum-master](agents/scrum-master.md) | Turns a broad request into an ordered work breakdown. Read-only; plans, never delegates. |
+| [developer](agents/developer.md) | Implements and fixes code. The one worker that edits files and runs commands. |
+| [reviewer](agents/reviewer.md) | Reviews existing code for correctness, security and maintainability. Read-only. |
+| [critic](agents/critic.md) | Reviews a proposed answer or diff for errors and unstated assumptions. Read-only. |
+| [researcher](agents/researcher.md) | Gathers and verifies facts from files and the web. Read-only. |
+| [test-writer](agents/test-writer.md) | Writes and runs tests; reproduces bugs as failing tests. |
+
+The last six are the worker team generated out of the `ai_agency` project by
+`python tasks.py export-agents`. Its companion manager prompt is **not** a
+subagent — it is the system prompt for the main-thread agent that delegates to
+them, so it lives in [docs/agent-teams/](docs/agent-teams/) rather than in
+`agents/`, where anything present is loaded as an invocable worker.
 
 Every skill named in an agent's `## Routing` table must exist in `skills/`; the
 validator treats a backticked kebab-case token in that section as a skill name
