@@ -64,9 +64,10 @@ KNOWN_KEYS = SPEC_KEYS | CLAUDE_CODE_KEYS
 # Agent frontmatter. Only name and description are required; the rest are the
 # documented optional fields, kept here so a legitimate one does not warn.
 AGENT_KNOWN_KEYS = {
-    "name", "description", "tools", "model", "color", "metadata",
-    "permissionMode", "skills", "memory", "hooks", "isolation", "effort",
-    "background", "maxTurns", "mcpServers", "initialPrompt", "experimental",
+    "name", "description", "tools", "disallowedTools", "model", "color",
+    "metadata", "permissionMode", "skills", "memory", "hooks", "isolation",
+    "effort", "background", "maxTurns", "mcpServers", "initialPrompt",
+    "experimental",
 }
 
 TOOL_LIST_KEYS = ("allowed-tools", "disallowed-tools")
@@ -205,6 +206,18 @@ def parse_frontmatter(fm: str) -> tuple[dict, list[str]]:
                 data[current_key][k.strip()] = _scalar(v)
                 continue
             problems.append(f"line {lineno}: cannot parse {stripped!r}")
+            continue
+
+        # A block sequence may sit at the same indentation as its key --
+        # "tools:\n- Read" is as valid as the indented form, and is what
+        # yaml.safe_dump emits, so generated agent files arrive this way.
+        if line.startswith("- "):
+            if current_key is None:
+                problems.append(f"line {lineno}: list item before any key")
+                continue
+            data.setdefault(current_key, [])
+            if isinstance(data[current_key], list):
+                data[current_key].append(_scalar(line[2:]))
             continue
 
         if ":" not in line:

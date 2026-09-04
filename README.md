@@ -37,7 +37,8 @@ The repo also doubles as an installable **plugin marketplace** for Claude Code /
 │   ├── mcp-server.json
 │   └── monitor.json
 ├── scripts/
-│   └── validate_skills.py    # frontmatter + structure linter
+│   ├── validate_skills.py    # frontmatter + structure linter
+│   └── export.py             # install the repo into the harness of your choice
 └── .github/workflows/ci.yml
 ```
 
@@ -188,17 +189,18 @@ dropping them. Install this repo as a plugin if you want the monitors:
 
 ### What the exporter guarantees
 
-- **Symlinks by default**, so editing a `SKILL.md` here changes the installed
-  skill with no re-run. `--copy` forces real copies; Windows without Developer
-  Mode falls back to copying on its own and says so.
+- **Symlinks by default** on the two Claude Code targets, so editing a
+  `SKILL.md` here changes the installed skill with no re-run. `--copy` forces
+  real copies; Windows without Developer Mode falls back to copying on its own
+  and says so.
 - **Idempotent**, with `--dry-run`. A second run reports `no change`.
 - **An allowlist, not a denylist.** Only skills, agents, hooks, MCP servers and
   monitors can leave the repo. `docs/` never does — a copy of your working data
   under `~/.claude/` would be in scope for every unrelated session on the
   machine.
-- **Reversible.** Each install writes a `.ai-agency-export.json` receipt naming
-  exactly what it created, so `--uninstall` removes our files and our settings
-  entries and leaves anyone else's alone.
+- **Reversible.** Each Claude Code install writes a `.ai-agency-export.json`
+  receipt naming exactly what it created, so `--uninstall` removes our files and
+  our settings entries and leaves anyone else's alone.
 - **Refuses to export a repo that does not validate** (`--skip-validate` to
   override).
 
@@ -206,6 +208,97 @@ dropping them. Install this repo as a plugin if you want the monitors:
 python3 scripts/export.py --target claude-code-user --dry-run
 python3 scripts/export.py --target claude-code-user --uninstall
 ```
+
+### Exporting to a harness that isn't Claude
+
+`--target generic` is the adapter-less target: it writes a flat bundle plus a
+manifest and leaves the wiring to whatever is going to read it.
+
+```bash
+python3 scripts/export.py --target generic --dry-run
+python3 scripts/export.py --target generic                     # -> dist/generic/
+python3 scripts/export.py --target generic --dest ~/bundle
+```
+
+The bundle holds `skills/`, `agents/`, `hooks/` and `monitors/` copied verbatim,
+`.mcp.json` under the name `mcp.json`, and a `manifest.json` naming every skill,
+agent, hook group, MCP server and monitor in it — the index the other harness
+reads to learn what arrived, since it has no conventions of ours to rely on.
+
+#### A worked example
+
+```console
+$ python3 scripts/export.py --target generic --dest ~/bundles/ai-agency
+export generic to /home/you/bundles/ai-agency
+  copy /home/you/bundles/ai-agency/skills
+  copy /home/you/bundles/ai-agency/agents
+  copy /home/you/bundles/ai-agency/hooks
+  copy /home/you/bundles/ai-agency/monitors
+  copy /home/you/bundles/ai-agency/mcp.json
+  write /home/you/bundles/ai-agency/manifest.json
+```
+
+```
+~/bundles/ai-agency/
+├── manifest.json
+├── mcp.json
+├── skills/
+│   ├── application-tailor/SKILL.md
+│   ├── role-sourcing/SKILL.md
+│   └── ...
+├── agents/
+│   └── job-hunter.md
+├── hooks/
+│   ├── hooks.json
+│   └── scripts/demo_hook.py
+└── monitors/
+    ├── monitors.json
+    └── scripts/demo_monitor.py
+```
+
+```json
+{
+  "source": "/home/you/src/ai_agency_skills",
+  "components": {
+    "skills": ["application-tailor", "role-sourcing", "interview-prep-ai"],
+    "agents": ["job-hunter"],
+    "hooks": ["SessionStart", "PostToolUse"],
+    "mcpServers": [],
+    "monitors": ["demo-hook-log"]
+  }
+}
+```
+
+Wiring that into a harness of your own is four small decisions, and the manifest
+is there so none of them requires walking the tree:
+
+1. **Skills.** Read `manifest.json` → `components.skills`, then for each name
+   load `skills/<name>/SKILL.md`. Its frontmatter `name` and `description` are
+   the two fields any loader needs — description decides when the skill applies,
+   the body is the procedure. Everything else in the folder is the skill's own
+   supporting files, referenced by relative path from `SKILL.md`.
+2. **Agents.** Same shape: `agents/<name>.md`, frontmatter for identity and tool
+   allowlist, body for routing. If your harness has no subagent concept, an
+   agent file still reads as a system prompt.
+3. **MCP servers.** `mcp.json` is the standard `{"mcpServers": {...}}` object,
+   so most harnesses take it as-is. `${ENV_VAR}` references are left unexpanded
+   on purpose — resolve them from the environment at load time.
+4. **Hooks and monitors.** These are the Claude Code shapes: `hooks.json` is
+   keyed by event name, `monitors.json` is an array of long-running commands
+   whose stdout lines are notifications. Map the events you have an equivalent
+   for and ignore the rest — the scripts themselves are plain Python: the hook
+   reads its event as JSON on stdin, the monitor takes flags and prints lines.
+
+Two differences from the Claude Code targets: it always copies, so `--copy` is
+redundant and there is no symlink mode; and it writes no receipt, so
+`--uninstall` does not apply — delete the output directory instead.
+
+One thing it does *not* do: `${CLAUDE_PLUGIN_ROOT}` stays a literal in the
+copied `hooks/hooks.json` and `monitors/monitors.json`. That token only expands
+inside a Claude Code plugin, so either define it in the receiving harness or
+rewrite those two commands to point at this checkout.
+
+### Exporting for upload to claude.ai
 
 The `claude-ai` target is the one that matters for cloud sessions: it reduces
 each skill's frontmatter to the six keys the Agent Skills spec allows and names
@@ -240,6 +333,18 @@ claude.ai-uploadable shape.
 | Agent | What it does |
 |---|---|
 | [job-hunter](agents/job-hunter.md) | Runs the senior SWE → senior AI engineer job search: sourcing, applications, pipeline, gap plan, interview prep. Working data in [docs/job-search/](docs/job-search/README.md). |
+| [scrum-master](agents/scrum-master.md) | Turns a broad request into an ordered work breakdown. Read-only; plans, never delegates. |
+| [developer](agents/developer.md) | Implements and fixes code. The one worker that edits files and runs commands. |
+| [reviewer](agents/reviewer.md) | Reviews existing code for correctness, security and maintainability. Read-only. |
+| [critic](agents/critic.md) | Reviews a proposed answer or diff for errors and unstated assumptions. Read-only. |
+| [researcher](agents/researcher.md) | Gathers and verifies facts from files and the web. Read-only. |
+| [test-writer](agents/test-writer.md) | Writes and runs tests; reproduces bugs as failing tests. |
+
+The last six are the worker team generated out of the `ai_agency` project by
+`python tasks.py export-agents`. Its companion manager prompt is **not** a
+subagent — it is the system prompt for the main-thread agent that delegates to
+them, so it lives in [docs/agent-teams/](docs/agent-teams/) rather than in
+`agents/`, where anything present is loaded as an invocable worker.
 
 Every skill named in an agent's `## Routing` table must exist in `skills/`; the
 validator treats a backticked kebab-case token in that section as a skill name
